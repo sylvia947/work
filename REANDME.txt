@@ -1,0 +1,86 @@
+HOOK有许多用法，本次实验是利用HOOK技术实现DLL远程进程注入。
+HOOK的代码被执行时，目标进程实际上就是在执行DLL中的代码，注入的思路就是把要执行的函数封装在DLL
+中，同时把HookProc写在同一个DLL中，HOOK成功后，接收消息的HOOKProc就会执行，于是执行想执行的代码。
+
+HookProc的代码如下：
+extern “C” __declspec(dllexport) LRESULT CALLBACK HookProc(int nCode,WPARAM wParam,LPARAM lParam){
+if(nCode<0)
+return CallNextHookEx(hooker,nCode,wParam,lParam);
+tagMSG* msg;
+msg=(tagMSG*)lParam;
+if(nCode==HC_ACTION && (msg->message==WM_CLOSE)){
+if(handled==FALSE){
+handled=TRUE;
+MessageBox(NULL,”This is a messagebox from notepad.exe”,”hook”,MB_OK);
+}
+UnhookWindowsHookEx(hooker);
+msg->message=WM_NULL;
+return CallNextHookEx(hooker,nCode,wParam,(LPARAM)msg);
+}
+return CallNextHookEx(hooker,nCode,wParam,lParam);
+}
+
+
+
+
+整个DLL的代码如下：
+#include "stdafx.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+HHOOK hooker;
+HWND notepadhandle;
+BOOL handled;
+
+extern "C" __declspec(dllexport) LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam);
+char* ConvertInttoChar(int i);
+BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
+	if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
+		handled = FALSE;
+		notepadhandle = FindWindow("Notepad", NULL);
+		if (notepadhandle == NULL) {
+			printf("Notepad Not Found.\n");
+			return TRUE;
+		}
+		hooker = SetWindowsHookEx(WH_GETMESSAGE, HookProc, (HINSTANCE)hModule, GetWindowThreadProcessId(notepadhandle, NULL));
+		if (hooker) {
+			printf("Hook Successfully.\nHookID:%d\n", hooker);
+		}
+		else {
+			printf("Hook Failed.\nError:%d\n", GetLastError());
+			return TRUE;
+		}
+		PostMessage(notepadhandle, WM_CLOSE, 0, 0);
+	}
+	return TRUE;
+}
+extern "C" __declspec(dllexport) LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam) {
+	if (nCode < 0)
+		return CallNextHookEx(hooker, nCode, wParam, lParam);
+	tagMSG* msg;
+	msg = (tagMSG*)lParam;
+	if (nCode == HC_ACTION && (msg->message == WM_CLOSE)) {
+		if (handled == FALSE) {
+			handled = TRUE;
+			MessageBox(NULL, "This is a messagebox from notepad.exe", "hook", MB_OK);
+		}
+		UnhookWindowsHookEx(hooker);
+		msg->message = WM_NULL;
+		return CallNextHookEx(hooker, nCode, wParam, (LPARAM)msg);
+	}
+	return CallNextHookEx(hooker, nCode, wParam, lParam);
+}
+
+编译连接到notepadhook.dll
+
+新建C++源文件，命名hook，键入以下代码：
+#include <stdio.h>
+#include <windows.h>
+int main(){
+LoadLibrary(“notepadhook.dll”);
+getchar();
+return 1;
+}
+
+编译连接得到hook.exe，将hook.exe与notepadhook.dll放在同一目录中，打开记事本，运行hook.exe，可以看到记事本中弹出了一个消息框，到这一步，DLL的注入完成
+
